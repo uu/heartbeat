@@ -1,11 +1,11 @@
 
 require "json"
-require "rest-client"
+require "httparty"
 require "lib/hooks"
 require "hashr"
 
 class FailoverIp
-  attr_accessor :base_url, :failover_ip, :ping_ip, :ips, :interval, :timeout, :tries
+  attr_accessor :base_url, :failover_ip, :ping_ip, :ips, :interval, :timeout, :tries, :url_without_auth, :username, :password
 
   def ping(ip = ping_ip)
     `ping -W #{timeout} -c #{tries} #{ip}`
@@ -22,11 +22,12 @@ class FailoverIp
   end
 
   def current_target
-    response = RestClient.get("#{base_url}/failover/#{failover_ip}")
+#    response = RestClient.get("#{base_url}/failover/#{failover_ip}")
+	HTTParty.get("#{url_without_auth}/failover/#{failover_ip}/", {:basic_auth=>{:username=>username,:password=>password}}).parsed_response["failover"]["active_server_ip"]
 
-    JSON.parse(response).deep_symbolize_keys[:failover][:active_server_ip]
-  rescue
-    $logger.error "Unable to retrieve the active server ip."
+#   JSON.parse(response).deep_symbolize_keys[:failover][:active_server_ip]
+  rescue Exception => e
+    $logger.error "Unable to retrieve the active server ip. Exception #{e.message}"
 
     nil
   end
@@ -59,7 +60,10 @@ class FailoverIp
 
       old_target = current_target
 
-      RestClient.post "#{base_url}/failover/#{failover_ip}", :active_server_ip => new_ip[:target]
+#      RestClient.post "#{base_url}/failover/#{failover_ip}", :active_server_ip => new_ip[:target]
+	  HTTParty.post("#{url_without_auth}/failover/#{failover_ip}/", {:basic_auth=>{:username=>username,:password=>password}, :body=>{:active_server_ip=>new_ip[:target]}})
+	   
+	    
 
       Hooks.run failover_ip, old_target, new_ip[:target]
 
@@ -67,8 +71,8 @@ class FailoverIp
     end
 
     false
-  rescue
-    $logger.error "Unable to set a new active server ip."
+  rescue Exception => e
+    $logger.error "Unable to set a new active server ip. Exception #{e.message}"
 
     false
   end
@@ -81,6 +85,10 @@ class FailoverIp
     self.interval = options[:interval] || 30
     self.timeout = options[:timeout] || 10
     self.tries = options[:tries] || 3
+    base_url =~ /^https:\/\/([\w\W]*):([\w\W]*)@([\w\W]*)$/
+    self.url_without_auth = "https://#{$3}"
+    self.username = $1
+    self.password = $2
   end
 
   def check
